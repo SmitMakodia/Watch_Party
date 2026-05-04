@@ -8,6 +8,134 @@ const { getSubtitles } = require('youtube-captions-scraper');
 const app = express();
 app.use(cors());
 
+const https = require('https');
+
+app.get('/proxy', async (req, res) => {
+  const targetUrl = req.query.url;
+  if (!targetUrl) return res.status(400).send('No url provided');
+
+  try {
+    const urlObj = new URL(targetUrl);
+    const origin = urlObj.origin;
+
+    // Define different header profiles to attempt
+    const profiles = [
+      {
+        name: 'Standard (No Origin/Referer)',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': '*/*',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Connection': 'keep-alive'
+        }
+      },
+      {
+        name: 'Spoofed Origin & Referer',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': '*/*',
+          'Connection': 'keep-alive',
+          'Origin': origin,
+          'Referer': origin + '/'
+        }
+      },
+      {
+         name: 'Mobile App Spoof',
+         headers: {
+           'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36',
+           'Accept': '*/*',
+           'Connection': 'keep-alive',
+           'Origin': origin
+         }
+      }
+    ];
+
+    let fetchRes = null;
+    let successfulProfile = null;
+
+    // Fallback logic loop
+    for (const profile of profiles) {
+      try {
+        const response = await fetch(targetUrl, { headers: profile.headers });
+        
+        // If it's a success or partial content, we found our winner
+        if (response.status === 200 || response.status === 206) {
+          fetchRes = response;
+          successfulProfile = profile.name;
+          break;
+        } else {
+          // Keep the last response in case all fail
+          fetchRes = response;
+        }
+      } catch (err) {
+        console.error(`Profile ${profile.name} failed with network error:`, err.message);
+      }
+    }
+
+    if (successfulProfile) {
+      console.log(`[PROXY] Successfully connected to ${urlObj.hostname} using profile: ${successfulProfile}`);
+    } else {
+      console.error(`[PROXY] All fallback profiles failed for ${urlObj.hostname}. Returning last status: ${fetchRes ? fetchRes.status : 500}`);
+    }
+
+    if (!fetchRes) {
+       return res.status(500).send('Network failure across all proxy profiles.');
+    }
+
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.set('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Range');
+    res.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
+    
+    const contentType = fetchRes.headers.get('content-type');
+    if (contentType) res.set('Content-Type', contentType);
+
+    res.status(fetchRes.status);
+    
+    if (fetchRes.body) {
+      const isM3u8 = (contentType && contentType.toLowerCase().includes('mpegurl')) || targetUrl.toLowerCase().includes('.m3u8');
+      
+      if (isM3u8) {
+        let text = await fetchRes.text();
+        const baseUrl = new URL(targetUrl);
+        
+        const lines = text.split('\n');
+        const rewrittenLines = lines.map(line => {
+           const trimmed = line.trim();
+           // Lines not starting with # are media chunk URLs or nested playlist URLs
+           if (trimmed && !trimmed.startsWith('#')) {
+              try {
+                 return new URL(trimmed, baseUrl.href).href;
+              } catch(e) {
+                 return line;
+              }
+           }
+           // EXT-X-KEY URIs also need resolving
+           if (trimmed.startsWith('#EXT-X-KEY:')) {
+               return trimmed.replace(/URI="([^"]+)"/, (match, p1) => {
+                   try {
+                       return `URI="${new URL(p1, baseUrl.href).href}"`;
+                   } catch(e) {
+                       return match;
+                   }
+               });
+           }
+           return line;
+        });
+        res.send(rewrittenLines.join('\n'));
+      } else {
+        const { Readable } = require('stream');
+        Readable.fromWeb(fetchRes.body).pipe(res);
+      }
+    } else {
+      res.end();
+    }
+  } catch (err) {
+    console.error('[PROXY] Fatal error:', err.message);
+    res.status(500).send(err.message);
+  }
+});
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {

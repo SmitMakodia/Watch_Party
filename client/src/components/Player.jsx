@@ -20,6 +20,8 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
   const [showChatEmoji, setShowChatEmoji] = useState(false); const [directControls, setDirectControls] = useState(false);
   
   const [currentMedia, setCurrentMedia] = useState(roomState?.media?.url || '');
+  const [playbackStrategy, setPlaybackStrategy] = useState('auto');
+  const [hasFailedOnce, setHasFailedOnce] = useState(false);
   const [playing, setPlaying] = useState(roomState?.playback?.playing || false);
   const [playbackRate, setPlaybackRate] = useState(roomState?.playback?.speed || 1);
   const [volume, setVolume] = useState(1);
@@ -65,6 +67,8 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
       setCurrentMedia(media.url);
       setPlayedSeconds(0);
       setPlaying(!!media.url);
+      setPlaybackStrategy('auto');
+      setHasFailedOnce(false);
     };
 
     const handlePlaybackSync = (state) => {
@@ -173,6 +177,30 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
         return () => clearInterval(interval);
      }
   }, [stopTimer]);
+
+  const getInitialStrategy = (url) => {
+    if (!url) return 'none';
+    const decoded = decodeURIComponent(url).toLowerCase();
+    if (decoded.includes('.m3u8')) return 'hls';
+    if (decoded.includes('.mpd')) return 'dash';
+    if (decoded.includes('youtube.com') || decoded.includes('youtu.be')) return 'youtube';
+    return 'video';
+  };
+
+  const handleMediaError = (e) => {
+    console.error("Player error:", e);
+    if (!hasFailedOnce) {
+      setHasFailedOnce(true);
+      const initial = getInitialStrategy(currentMedia);
+      if (initial === 'hls') {
+        setPlaybackStrategy('forceVideo');
+      } else {
+        setPlaybackStrategy('forceHLS');
+      }
+    } else {
+      emitSystemMessage('failed to play the media URL. It might be invalid, unsupported, or blocked by CORS.');
+    }
+  };
 
   const closeAllMenus = () => {
      setShowSpeedMenu(false);
@@ -415,6 +443,12 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
     });
   };
 
+  const activeStrategy = playbackStrategy === 'auto' ? getInitialStrategy(currentMedia) : playbackStrategy;
+  
+  // By default, avoid 'anonymous' crossOrigin unless subtitles are loaded.
+  // This drastically improves compatibility for direct video links that don't have CORS headers.
+  const fileAttributes = subtitleUrl ? { crossOrigin: 'anonymous' } : {};
+
   return (
     <div className="flex flex-col h-full bg-amoled relative">
       {/* Dynamic Subtitle CSS */}
@@ -530,10 +564,33 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
                   playerVars: { controls: directControls ? 1 : 0, disablekb: 1, modestbranding: 1, cc_load_policy: 1, iv_load_policy: 3 }
                 },
                 file: {
+                   forceHLS: activeStrategy === 'hls',
+                   forceDASH: activeStrategy === 'dash',
+                   forceVideo: activeStrategy === 'video' || activeStrategy === 'auto',
                    tracks: subtitleUrl ? [{ kind: 'subtitles', src: subtitleUrl, srcLang: 'en', default: true }] : [],
-                   attributes: { crossOrigin: 'anonymous' }
+                   attributes: fileAttributes,
+                   hlsOptions: {
+                     xhrSetup: function(xhr, url) {
+                       if (url.startsWith('http') && !url.includes('localhost:3001/proxy')) {
+                         const proxyUrl = 'http://localhost:3001/proxy?url=' + encodeURIComponent(url);
+                         
+                         // Save properties that hls.js already set on the xhr instance
+                         const responseType = xhr.responseType;
+                         const timeout = xhr.timeout;
+                         const withCredentials = xhr.withCredentials;
+                         
+                         xhr.open('GET', proxyUrl, true);
+                         
+                         // Restore them after re-opening
+                         if (responseType) xhr.responseType = responseType;
+                         if (timeout) xhr.timeout = timeout;
+                         if (withCredentials) xhr.withCredentials = withCredentials;
+                       }
+                     }
+                   }
                 }
               }}
+              onError={handleMediaError}
               />
               ) : (
               <div className="text-gray-600 flex flex-col items-start select-none pointer-events-none">
