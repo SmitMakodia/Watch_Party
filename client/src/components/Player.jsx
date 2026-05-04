@@ -840,83 +840,83 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
                   <button onClick={toggleFullscreen} className="h-10 w-10 flex-shrink-0 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-white hover:text-red-500 rounded-[12px] transition-colors shadow-md">
                     {isFullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
                   </button>
-                  
-                  {/* Fixed Popups container for small screens so they don't clip */}
-                  {showEmoji && (
-                     <div className="absolute bottom-[44px] left-1/2 -translate-x-1/2 z-50">
-                       <EmojiPicker theme="dark" onEmojiClick={(e) => { socket.emit('send_reaction', e.emoji); }} height={350} width={280} />
-                     </div>
-                  )}
-                  {showSpeedMenu && (
-                     <div className="absolute bottom-[44px] right-24 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-xl p-1.5 flex flex-col gap-1 w-20">
-                        {[0.5, 1, 1.25, 1.5, 2].map(speed => (
-                           <button 
-                             key={speed} 
-                             onClick={() => setSpeed(speed)}
-                             className={`px-3 py-1.5 text-xs rounded-lg text-left hover:bg-gray-800 font-medium ${playbackRate === speed ? 'text-red-500 bg-gray-800' : 'text-gray-300'}`}
-                           >
-                             {speed}x
-                           </button>
-                        ))}
-                     </div>
-                  )}
-                  {showQualityMenu && (
-                     <div className="absolute bottom-[44px] right-24 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-xl p-1.5 flex flex-col gap-1 w-24 max-h-48 overflow-y-auto custom-scrollbar">
-                        {qualities.map(q => (
-                           <button 
-                             key={q} 
-                             onClick={() => changeQuality(q)}
-                             className={`px-3 py-1.5 text-xs rounded-lg text-left hover:bg-gray-800 font-medium ${currentQuality === q ? 'text-red-500 bg-gray-800' : 'text-gray-300'}`}
-                           >
-                             {q}
-                           </button>
-                        ))}
-                     </div>
-                  )}
-                  {showCaptionsMenu && (
-                     <div className="absolute bottom-[44px] right-0 md:right-12 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-xl p-4 flex flex-col gap-3 w-64 text-sm">
-                        <h4 className="text-white font-bold mb-1">Subtitles</h4>
-                        
-                        <button onClick={() => { setSubtitleUrl(''); setShowCaptionsMenu(false); emitSystemMessage('turned off captions'); }} className="text-left text-red-400 hover:text-red-300 font-medium">
-                           Turn Off Captions
-                        </button>
-                        
-                        <div className="border-t border-gray-800"></div>
-                        
-                        <button onClick={() => { setShowSubSearch(true); setShowCaptionsMenu(false); }} className="text-left text-blue-400 hover:text-blue-300 font-medium flex items-start gap-2">
-                           <Search size={14} /> Search Online
-                        </button>
-                        
-                        <label className="flex items-start gap-2 text-green-400 hover:text-green-300 font-medium cursor-pointer">
-                           <Upload size={14} /> Load Local File
-                           <input type="file" accept=".vtt,.srt" className="hidden" onChange={handleSubtitleUpload} />
-                        </label>
-                        
-                        <div className="border-t border-gray-800 mt-2"></div>
-                        <h4 className="text-gray-400 text-xs font-semibold mb-1">Settings</h4>
-                        
-                        <div className="flex justify-between items-start text-xs text-gray-300">
-                           <span>Size:</span>
-                           <div className="flex gap-2 bg-gray-800 rounded p-1">
-                              <button onClick={() => setSubtitleSize('1rem')} className={`px-2 py-1 rounded ${subtitleSize === '1rem' ? 'bg-gray-700 text-white' : ''}`}>S</button>
-                              <button onClick={() => setSubtitleSize('1.5rem')} className={`px-2 py-1 rounded ${subtitleSize === '1.5rem' ? 'bg-gray-700 text-white' : ''}`}>M</button>
-                              <button onClick={() => setSubtitleSize('2rem')} className={`px-2 py-1 rounded ${subtitleSize === '2rem' ? 'bg-gray-700 text-white' : ''}`}>L</button>
-                           </div>
-                        </div>
-
-                        <div className="flex justify-between items-start text-xs text-gray-300">
-                           <span>Position:</span>
-                           <div className="flex gap-2 bg-gray-800 rounded p-1">
-                              <button onClick={() => setSubtitlePos('10%')} className={`px-2 py-1 rounded ${subtitlePos === '10%' ? 'bg-gray-700 text-white' : ''}`}>Top</button>
-                              <button onClick={() => setSubtitlePos('50%')} className={`px-2 py-1 rounded ${subtitlePos === '50%' ? 'bg-gray-700 text-white' : ''}`}>Mid</button>
-                              <button onClick={() => setSubtitlePos('80%')} className={`px-2 py-1 rounded ${subtitlePos === '80%' ? 'bg-gray-700 text-white' : ''}`}>Bot</button>
-                           </div>
-                        </div>
-
-                     </div>
-                  )}
-
                </div>
+
+               {/* Fixed Popups container for small screens so they don't clip */}
+               {showEmoji && (
+                  <div className="absolute bottom-[44px] left-1/2 -translate-x-1/2 z-50">
+                    <EmojiPicker theme="dark" onEmojiClick={(e) => { socket.emit('send_reaction', e.emoji); }} height={350} width={280} />
+                  </div>
+               )}
+               {showSpeedMenu && (
+                  <div className="absolute bottom-[44px] right-24 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-xl p-1.5 flex flex-col gap-1 w-20">
+                     {[0.5, 1, 1.25, 1.5, 2].map(speed => (
+                        <button 
+                          key={speed} 
+                          onClick={() => setSpeed(speed)}
+                          className={`px-3 py-1.5 text-xs rounded-lg text-left hover:bg-gray-800 font-medium ${playbackRate === speed ? 'text-red-500 bg-gray-800' : 'text-gray-300'}`}
+                        >
+                          {speed}x
+                        </button>
+                     ))}
+                  </div>
+               )}
+               {showQualityMenu && (
+                  <div className="absolute bottom-[44px] right-24 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-xl p-1.5 flex flex-col gap-1 w-24 max-h-48 overflow-y-auto custom-scrollbar">
+                     {qualities.map(q => (
+                        <button 
+                          key={q} 
+                          onClick={() => changeQuality(q)}
+                          className={`px-3 py-1.5 text-xs rounded-lg text-left hover:bg-gray-800 font-medium ${currentQuality === q ? 'text-red-500 bg-gray-800' : 'text-gray-300'}`}
+                        >
+                          {q}
+                        </button>
+                     ))}
+                  </div>
+               )}
+               {showCaptionsMenu && (
+                  <div className="absolute bottom-[44px] right-0 md:right-12 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-xl p-4 flex flex-col gap-3 w-64 text-sm">
+                     <h4 className="text-white font-bold mb-1">Subtitles</h4>
+                     
+                     <button onClick={() => { setSubtitleUrl(''); setShowCaptionsMenu(false); emitSystemMessage('turned off captions'); }} className="text-left text-red-400 hover:text-red-300 font-medium">
+                        Turn Off Captions
+                     </button>
+                     
+                     <div className="border-t border-gray-800"></div>
+                     
+                     <button onClick={() => { setShowSubSearch(true); setShowCaptionsMenu(false); }} className="text-left text-blue-400 hover:text-blue-300 font-medium flex items-start gap-2">
+                        <Search size={14} /> Search Online
+                     </button>
+                     
+                     <label className="flex items-start gap-2 text-green-400 hover:text-green-300 font-medium cursor-pointer">
+                        <Upload size={14} /> Load Local File
+                        <input type="file" accept=".vtt,.srt" className="hidden" onChange={handleSubtitleUpload} />
+                     </label>
+                     
+                     <div className="border-t border-gray-800 mt-2"></div>
+                     <h4 className="text-gray-400 text-xs font-semibold mb-1">Settings</h4>
+                     
+                     <div className="flex justify-between items-start text-xs text-gray-300">
+                        <span>Size:</span>
+                        <div className="flex gap-2 bg-gray-800 rounded p-1">
+                           <button onClick={() => setSubtitleSize('1rem')} className={`px-2 py-1 rounded ${subtitleSize === '1rem' ? 'bg-gray-700 text-white' : ''}`}>S</button>
+                           <button onClick={() => setSubtitleSize('1.5rem')} className={`px-2 py-1 rounded ${subtitleSize === '1.5rem' ? 'bg-gray-700 text-white' : ''}`}>M</button>
+                           <button onClick={() => setSubtitleSize('2rem')} className={`px-2 py-1 rounded ${subtitleSize === '2rem' ? 'bg-gray-700 text-white' : ''}`}>L</button>
+                        </div>
+                     </div>
+
+                     <div className="flex justify-between items-start text-xs text-gray-300">
+                        <span>Position:</span>
+                        <div className="flex gap-2 bg-gray-800 rounded p-1">
+                           <button onClick={() => setSubtitlePos('10%')} className={`px-2 py-1 rounded ${subtitlePos === '10%' ? 'bg-gray-700 text-white' : ''}`}>Top</button>
+                           <button onClick={() => setSubtitlePos('50%')} className={`px-2 py-1 rounded ${subtitlePos === '50%' ? 'bg-gray-700 text-white' : ''}`}>Mid</button>
+                           <button onClick={() => setSubtitlePos('80%')} className={`px-2 py-1 rounded ${subtitlePos === '80%' ? 'bg-gray-700 text-white' : ''}`}>Bot</button>
+                        </div>
+                     </div>
+
+                  </div>
+               )}
+
             </div>
           </div>
         </div>
