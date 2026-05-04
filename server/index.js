@@ -136,6 +136,33 @@ app.get('/proxy', async (req, res) => {
   }
 });
 
+app.get('/proxy/subtitle', (req, res) => {
+  const targetUrl = req.query.url;
+  if (!targetUrl) return res.status(400).send('No url provided');
+
+  try {
+    const zlib = require('zlib');
+    const https = require('https');
+    
+    https.get(targetUrl, (proxyRes) => {
+      res.set('Access-Control-Allow-Origin', '*');
+      res.set('Content-Type', 'text/plain');
+      
+      const unzip = zlib.createGunzip();
+      proxyRes.pipe(unzip).pipe(res);
+      
+      unzip.on('error', (err) => {
+         console.error('Subtitle unzip error:', err.message);
+         if (!res.headersSent) res.status(500).send('Failed to extract subtitle');
+      });
+    }).on('error', (err) => {
+      res.status(500).send(err.message);
+    });
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
+
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
@@ -316,13 +343,20 @@ io.on('connection', (socket) => {
 
     socket.on('search_subtitles', async (query, callback) => {
       try {
-         // Simulating an online subtitle search as public unauthenticated APIs are heavily rate-limited.
-         // In a full production app, you would integrate subdl or OpenSubtitles REST API here with a key.
-         const mockResults = [
-            { title: `${query} - English (Synced)`, url: 'mock' },
-            { title: `${query} - English (SDH)`, url: 'mock' }
-         ];
-         callback({ success: true, results: mockResults });
+         const fetchRes = await fetch(`https://rest.opensubtitles.org/search/query-${encodeURIComponent(query)}/sublanguageid-eng`, {
+            headers: { 'User-Agent': 'TemporaryUserAgent' }
+         });
+         const data = await fetchRes.json();
+         
+         const protocol = socket.handshake.headers['x-forwarded-proto'] || 'http';
+         const host = socket.handshake.headers.host || 'localhost:3001';
+         const backendUrl = `${protocol}://${host}`;
+         
+         const results = data.slice(0, 15).map(sub => ({
+            title: sub.SubFileName,
+            url: `${backendUrl}/proxy/subtitle?url=${encodeURIComponent(sub.SubDownloadLink)}`
+         }));
+         callback({ success: true, results });
       } catch (err) {
          callback({ success: false, error: err.message });
       }

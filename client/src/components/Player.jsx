@@ -7,7 +7,7 @@ import { MousePointer2,
 } from 'lucide-react';
 import EmojiPicker from 'emoji-picker-react';
 
-export default function Player({ socket, roomState, roomId, currentUserId, onToggleChat }) {
+export default function Player({ socket, roomState, roomId, currentUserId, onToggleChat, serverUrl }) {
   const [inputMode, setInputMode] = useState('url'); 
   const [urlInput, setUrlInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -571,8 +571,8 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
                    attributes: fileAttributes,
                    hlsOptions: {
                      xhrSetup: function(xhr, url) {
-                       if (url.startsWith('http') && !url.includes('localhost:3001/proxy')) {
-                         const proxyUrl = 'http://localhost:3001/proxy?url=' + encodeURIComponent(url);
+                       if (url.startsWith('http') && !url.includes(serverUrl + '/proxy')) {
+                         const proxyUrl = serverUrl + '/proxy?url=' + encodeURIComponent(url);
                          
                          // Save properties that hls.js already set on the xhr instance
                          const responseType = xhr.responseType;
@@ -634,7 +634,7 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
                        {isSearchingSubs ? <Loader2 size={16} className="animate-spin" /> : 'Search'}
                     </button>
                  </form>
-                 <div className="flex flex-col gap-2 max-h-48 overflow-y-auto custom-scrollbar mb-4">
+                 <div className="flex flex-col gap-2 max-h-[60vh] overflow-y-auto custom-scrollbar mb-4">
                     {subSearchResults.length === 0 ? (
                        <p className="text-gray-500 text-xs text-center">Search for titles above.</p>
                     ) : (
@@ -642,7 +642,7 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
                           <button 
                              key={i}
                              onClick={() => { setSubtitleUrl(sub.url); setShowSubSearch(false); setShowCaptionsMenu(false); emitSystemMessage(`loaded subtitle ${sub.title}`); }}
-                             className="text-left bg-gray-800 hover:bg-gray-700 px-3 py-2 rounded-lg text-xs text-white transition truncate"
+                             className="text-left bg-gray-800 hover:bg-gray-700 px-3 py-3 rounded-lg text-sm text-white transition break-words"
                           >
                              {sub.title}
                           </button>
@@ -699,14 +699,14 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
 
         {/* Media Controls Bar (Bottom) */}
         <div 
-           className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/80 to-transparent flex flex-col justify-end p-2 md:p-4 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'} ${stopTimer ? 'pointer-events-none opacity-0' : ''}`}
+           className={`absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black via-black/80 to-transparent flex flex-col justify-end p-1 md:p-4 transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'} ${stopTimer ? 'pointer-events-none opacity-0' : ''}`}
            onMouseEnter={() => setShowControls(true)}
         >
           <div className="w-full max-w-6xl mx-auto flex flex-col gap-2 z-30 pointer-events-auto">
             
             {/* Progress Bar & Sync */}
-            <div className="flex items-center gap-3 w-full px-2">
-               <span className="text-xs text-white font-medium w-10 text-right">{formatTime(playedSeconds)}</span>
+            <div className="flex items-center gap-2 md:gap-3 w-full px-1 md:px-2">
+               <span className="text-[10px] md:text-xs text-white font-medium w-8 md:w-10 text-right">{formatTime(playedSeconds)}</span>
                <input 
                   type="range"
                   min={0}
@@ -721,16 +721,16 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
                   className="flex-1 h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-red-500 hover:h-2 transition-all duration-200"
                   style={{ background: `linear-gradient(to right, #ef4444 ${(playedSeconds / (duration || 1)) * 100}%, #374151 ${(playedSeconds / (duration || 1)) * 100}%)` }}
                />
-               <span className="text-xs text-gray-400 font-medium w-10">{formatTime(duration)}</span>
-               <button onClick={requestSync} className="flex items-start gap-1 ml-2 px-2 py-1 bg-red-600/80 hover:bg-red-600 rounded-lg text-[10px] font-bold text-white transition-colors">
+               <span className="text-[10px] md:text-xs text-gray-400 font-medium w-8 md:w-10">{formatTime(duration)}</span>
+               <button onClick={requestSync} className="hidden md:flex items-start gap-1 ml-2 px-2 py-1 bg-red-600/80 hover:bg-red-600 rounded-lg text-[10px] font-bold text-white transition-colors">
                   <RefreshCw size={10} /> Sync Now
                </button>
             </div>
 
-            <div className="flex flex-col md:flex-row items-start justify-between gap-4 mt-2">
+            <div className="flex flex-col md:flex-row items-start justify-between gap-2 md:gap-4 mt-1 md:mt-2">
                
                {/* 0. Chat Section (Left Most) */}
-               <div className="flex w-full md:w-72 relative items-center bg-gray-800 rounded-[12px] h-10 px-1 shadow-inner flex-shrink-0 mb-2 md:mb-0">
+               <div className="hidden md:flex w-full md:w-72 relative items-center bg-gray-800 rounded-[12px] h-10 px-1 shadow-inner flex-shrink-0 mb-2 md:mb-0 landscape:hidden md:landscape:flex">
                   <button onClick={() => { closeAllMenus(); setShowChatEmoji(!showChatEmoji); }} className="text-gray-400 hover:text-yellow-400 p-1.5 transition-colors">
                      <Smile size={18} />
                   </button>
@@ -759,8 +759,8 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
                   )}
                </div>
 
-               {/* Right Side Buttons - Flex wrap on small screens to avoid clipping */}
-               <div className="flex items-center justify-center flex-wrap gap-2 md:gap-3 w-full md:w-auto relative">
+               {/* Right Side Buttons - Horizontal Scroll on mobile to save vertical space */}
+               <div className="flex items-center justify-start md:justify-end overflow-x-auto custom-scrollbar pb-1 flex-nowrap md:flex-wrap gap-2 md:gap-3 w-full md:w-auto relative">
                   
                   {/* 1. Play/Pause */}
                   <button onClick={handlePlayPause} className="h-10 w-10 flex-shrink-0 flex items-center justify-center bg-gray-800 hover:bg-gray-700 text-white rounded-[12px] transition-colors shadow-md">

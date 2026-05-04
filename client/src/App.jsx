@@ -4,7 +4,7 @@ import Player from './components/Player';
 import Chat from './components/Chat';
 import { RefreshCw, Upload } from 'lucide-react';
 
-const SOCKET_URL = import.meta.env.VITE_SERVER_URL || 'http://localhost:3001';
+const SOCKET_URL = import.meta.env.VITE_SERVER_URL || (window.location.hostname === 'localhost' ? 'http://localhost:3001' : 'https://watch-party-server-4bu9.onrender.com');
 const ALL_COLORS = ['#fde047', '#ffffff', '#f9a8d4', '#86efac', '#fca5a5', '#93c5fd', '#d8b4fe', '#c4b5fd', '#fcd34d', '#fdba74'];
 
 function App() {
@@ -165,6 +165,7 @@ function App() {
            roomId={roomId} 
            currentUserId={socket.id} 
            onToggleChat={() => setShowMobileChat(!showMobileChat)} 
+           serverUrl={SOCKET_URL}
         />
       </div>
 
