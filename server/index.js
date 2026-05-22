@@ -10,7 +10,8 @@ app.use(cors());
 
 const https = require('https');
 
-app.get('/proxy', async (req, res) => {
+// --- UNIFIED PROXY HANDLER ---
+async function handleProxy(req, res) {
   const targetUrl = req.query.url;
   if (!targetUrl) return res.status(400).send('No url provided');
 
@@ -18,123 +19,169 @@ app.get('/proxy', async (req, res) => {
     const urlObj = new URL(targetUrl);
     const origin = urlObj.origin;
 
-    // Define different header profiles to attempt
+    // Parse custom headers from query param (if explicitly set for our proxy)
+    let customHeaders = {};
+    if (req.query.headers) {
+      try {
+        customHeaders = JSON.parse(req.query.headers);
+      } catch(e) {}
+    }
+
+    // Build base headers
+    const baseHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': '*/*',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Connection': 'keep-alive',
+      ...customHeaders
+    };
+
+    // Forward Range header from client (critical for video seeking)
+    if (req.headers.range) {
+      baseHeaders['Range'] = req.headers.range;
+    }
+
     const profiles = [
       {
         name: 'Standard (No Origin/Referer)',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': '*/*',
-          'Accept-Language': 'en-US,en;q=0.9',
-          'Connection': 'keep-alive'
-        }
+        headers: { ...baseHeaders }
       },
       {
         name: 'Spoofed Origin & Referer',
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': '*/*',
-          'Connection': 'keep-alive',
+          ...baseHeaders,
           'Origin': origin,
           'Referer': origin + '/'
         }
       },
       {
-         name: 'Mobile App Spoof',
-         headers: {
-           'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36',
-           'Accept': '*/*',
-           'Connection': 'keep-alive',
-           'Origin': origin
-         }
+        name: 'Mobile App Spoof',
+        headers: {
+          ...baseHeaders,
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 10; SM-G981B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/80.0.3987.162 Mobile Safari/537.36',
+          'Origin': origin
+        }
       }
     ];
 
     let fetchRes = null;
     let successfulProfile = null;
 
-    // Fallback logic loop
     for (const profile of profiles) {
       try {
-        const response = await fetch(targetUrl, { headers: profile.headers });
+        const response = await fetch(targetUrl, {
+          method: req.method === 'HEAD' ? 'HEAD' : 'GET',
+          headers: profile.headers,
+          redirect: 'follow'
+        });
         
-        // If it's a success or partial content, we found our winner
         if (response.status === 200 || response.status === 206) {
           fetchRes = response;
           successfulProfile = profile.name;
           break;
         } else {
-          // Keep the last response in case all fail
           fetchRes = response;
         }
       } catch (err) {
-        console.error(`Profile ${profile.name} failed with network error:`, err.message);
+        console.error(`[PROXY] Profile ${profile.name} failed:`, err.message);
       }
     }
 
     if (successfulProfile) {
-      console.log(`[PROXY] Successfully connected to ${urlObj.hostname} using profile: ${successfulProfile}`);
+      console.log(`[PROXY] ${req.method} ${urlObj.hostname} - Profile: ${successfulProfile} - Status: ${fetchRes.status}`);
     } else {
-      console.error(`[PROXY] All fallback profiles failed for ${urlObj.hostname}. Returning last status: ${fetchRes ? fetchRes.status : 500}`);
+      console.error(`[PROXY] ${req.method} ${urlObj.hostname} - All profiles failed. Last status: ${fetchRes ? fetchRes.status : 'Network Error'}`);
     }
 
     if (!fetchRes) {
-       return res.status(500).send('Network failure across all proxy profiles.');
+      return res.status(500).send('Network failure across all proxy profiles.');
     }
 
+    // CORS headers
     res.set('Access-Control-Allow-Origin', '*');
-    res.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
     res.set('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Range');
-    res.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range');
-    
+    res.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
+
+    // Forward response headers
     const contentType = fetchRes.headers.get('content-type');
     if (contentType) res.set('Content-Type', contentType);
+    
+    const acceptRanges = fetchRes.headers.get('accept-ranges');
+    if (acceptRanges) res.set('Accept-Ranges', acceptRanges);
+    
+    const contentLength = fetchRes.headers.get('content-length');
+    if (contentLength) res.set('Content-Length', contentLength);
+    
+    const contentRange = fetchRes.headers.get('content-range');
+    if (contentRange) res.set('Content-Range', contentRange);
 
     res.status(fetchRes.status);
-    
-    if (fetchRes.body) {
-      const isM3u8 = (contentType && contentType.toLowerCase().includes('mpegurl')) || targetUrl.toLowerCase().includes('.m3u8');
+
+    if (req.method === 'HEAD' || !fetchRes.body) {
+      return res.end();
+    }
+
+    const isM3u8 = (contentType && contentType.toLowerCase().includes('mpegurl')) || 
+                   targetUrl.toLowerCase().includes('.m3u8');
+
+    if (isM3u8) {
+      let text = await fetchRes.text();
       
-      if (isM3u8) {
-        let text = await fetchRes.text();
-        const baseUrl = new URL(targetUrl);
-        
-        const lines = text.split('\n');
-        const rewrittenLines = lines.map(line => {
-           const trimmed = line.trim();
-           // Lines not starting with # are media chunk URLs or nested playlist URLs
-           if (trimmed && !trimmed.startsWith('#')) {
-              try {
-                 return new URL(trimmed, baseUrl.href).href;
-              } catch(e) {
-                 return line;
-              }
-           }
-           // EXT-X-KEY URIs also need resolving
-           if (trimmed.startsWith('#EXT-X-KEY:')) {
-               return trimmed.replace(/URI="([^"]+)"/, (match, p1) => {
-                   try {
-                       return `URI="${new URL(p1, baseUrl.href).href}"`;
-                   } catch(e) {
-                       return match;
-                   }
-               });
-           }
-           return line;
-        });
-        res.send(rewrittenLines.join('\n'));
-      } else {
-        const { Readable } = require('stream');
-        Readable.fromWeb(fetchRes.body).pipe(res);
+      // Validate: actual M3U8 must start with #EXTM3U
+      // If not, the upstream returned an error page (Cloudflare block, etc.)
+      if (!text.trim().startsWith('#EXTM3U')) {
+        console.error(`[PROXY] Upstream returned non-M3U8 content for ${urlObj.hostname}. Status: ${fetchRes.status}, starts with: ${text.substring(0, 80).replace(/\n/g, ' ')}`);
+        res.status(fetchRes.status >= 400 ? fetchRes.status : 502);
+        res.set('Content-Type', 'text/plain');
+        res.send(`Upstream error: ${fetchRes.status} - Response is not a valid M3U8 playlist. The URL may be blocked, expired, or geo-restricted.`);
+        return;
       }
+      
+      const baseUrl = new URL(targetUrl);
+      
+      const protocol = req.headers['x-forwarded-proto'] || 'http';
+      const host = req.headers.host || 'localhost:3001';
+      const proxyBase = `${protocol}://${host}/proxy?url=`;
+
+      const lines = text.split('\n');
+      const rewrittenLines = lines.map(line => {
+        const trimmed = line.trim();
+        // Lines not starting with # are media chunk URLs or nested playlist URLs
+        if (trimmed && !trimmed.startsWith('#')) {
+          try {
+            const absoluteUrl = new URL(trimmed, baseUrl.href).href;
+            return proxyBase + encodeURIComponent(absoluteUrl);
+          } catch(e) {
+            return line;
+          }
+        }
+        // Any HLS tag containing URI="..." needs resolving (keys, maps, media, etc.)
+        if (trimmed.includes('URI="')) {
+          return trimmed.replace(/URI="([^"]+)"/g, (match, p1) => {
+            try {
+              const absoluteUrl = new URL(p1, baseUrl.href).href;
+              return `URI="${proxyBase + encodeURIComponent(absoluteUrl)}"`;
+            } catch(e) {
+              return match;
+            }
+          });
+        }
+        return line;
+      });
+      res.send(rewrittenLines.join('\n'));
     } else {
-      res.end();
+      const { Readable } = require('stream');
+      Readable.fromWeb(fetchRes.body).pipe(res);
     }
   } catch (err) {
     console.error('[PROXY] Fatal error:', err.message);
     res.status(500).send(err.message);
   }
-});
+}
+
+app.get('/proxy', handleProxy);
+app.head('/proxy', handleProxy);
 
 app.get('/proxy/subtitle', (req, res) => {
   const targetUrl = req.query.url;

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import ReactPlayer from 'react-player';
+import CustomVideoPlayer from './CustomVideoPlayer';
 import { MousePointer2, 
   Play, Pause, Maximize, Minimize, 
   RotateCcw, RotateCw, Settings, Search, Smile, Volume2, VolumeX,
@@ -23,6 +24,10 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
   const [playbackStrategy, setPlaybackStrategy] = useState('auto');
   const [hasFailedOnce, setHasFailedOnce] = useState(false);
   const [playing, setPlaying] = useState(roomState?.playback?.playing || false);
+  
+  // Error recovery: only show fatal errors if playback hasn't started after a grace period
+  const errorTimerRef = useRef(null);
+  const hasStartedPlaybackRef = useRef(false);
   const [playbackRate, setPlaybackRate] = useState(roomState?.playback?.speed || 1);
   const [volume, setVolume] = useState(1);
   const [muted, setMuted] = useState(false);
@@ -62,13 +67,59 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
   const chatEmojiRef = useRef(null);
   const lastTapRef = useRef(0);
 
+  const clearErrorTimer = () => {
+    if (errorTimerRef.current) {
+      clearTimeout(errorTimerRef.current);
+      errorTimerRef.current = null;
+    }
+  };
+
+  const scheduleErrorMessage = (msg) => {
+    clearErrorTimer();
+    errorTimerRef.current = setTimeout(() => {
+      // Only show error if playback hasn't actually started
+      if (!hasStartedPlaybackRef.current) {
+        emitSystemMessage(msg);
+      }
+    }, 8000);
+  };
+
+  // URL Helpers
+  const isYoutubeUrl = (url) => {
+    if (!url) return false;
+    const lower = url.toLowerCase();
+    return lower.includes('youtube.com') || lower.includes('youtu.be');
+  };
+
+  const getProxiedUrl = (url) => {
+    if (!url) return url;
+    if (isYoutubeUrl(url)) return url;
+    if (url.includes(serverUrl + '/proxy')) return url;
+    return serverUrl + '/proxy?url=' + encodeURIComponent(url);
+  };
+
+  const getUnderlyingUrl = (url) => {
+    if (!url) return url;
+    const proxyPrefix = serverUrl + '/proxy?url=';
+    if (url.startsWith(proxyPrefix)) {
+      try {
+        return decodeURIComponent(url.substring(proxyPrefix.length).split('&')[0]);
+      } catch(e) {
+        return url;
+      }
+    }
+    return url;
+  };
+
   useEffect(() => {
     const handleMediaChanged = (media) => {
-      setCurrentMedia(media.url);
+      setCurrentMedia(getProxiedUrl(media.url));
       setPlayedSeconds(0);
       setPlaying(!!media.url);
       setPlaybackStrategy('auto');
       setHasFailedOnce(false);
+      hasStartedPlaybackRef.current = false;
+      clearErrorTimer();
     };
 
     const handlePlaybackSync = (state) => {
@@ -180,25 +231,44 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
 
   const getInitialStrategy = (url) => {
     if (!url) return 'none';
-    const decoded = decodeURIComponent(url).toLowerCase();
-    if (decoded.includes('.m3u8')) return 'hls';
-    if (decoded.includes('.mpd')) return 'dash';
-    if (decoded.includes('youtube.com') || decoded.includes('youtu.be')) return 'youtube';
+    const actualUrl = getUnderlyingUrl(url).toLowerCase();
+    if (actualUrl.includes('.m3u8') || actualUrl.includes('/hls/')) return 'hls';
+    if (actualUrl.includes('.mpd')) return 'dash';
+    if (actualUrl.includes('youtube.com') || actualUrl.includes('youtu.be')) return 'youtube';
     return 'video';
   };
 
-  const handleMediaError = (e) => {
-    console.error("Player error:", e);
+  const handleMediaError = (e, data, hlsInstance, HlsGlobal) => {
+    console.error("Player error:", e, data, hlsInstance);
+    
+    // 1. Ignore non-fatal HLS errors (hls.js recovers automatically)
+    if (data && data.fatal === false) return;
+    
+    // 2. Ignore autoplay policy rejections
+    if (e && e.name === 'NotAllowedError') return;
+    if (e && e.name === 'AbortError') return;
+    if (e && e.message && e.message.includes('The play() request was interrupted')) return;
+    if (e === 'AbortError') return;
+
+    // 3. Ignore native video errors when HLS is active (hls.js manages its own lifecycle)
+    if (activeStrategy === 'hls' && (!data || data.fatal === undefined)) {
+      // This is likely a transient native error during hls.js init/teardown
+      return;
+    }
+
     if (!hasFailedOnce) {
       setHasFailedOnce(true);
       const initial = getInitialStrategy(currentMedia);
-      if (initial === 'hls') {
-        setPlaybackStrategy('forceVideo');
-      } else {
+      
+      if (initial === 'hls' && data && data.fatal === true) {
+        // Only show fatal HLS errors after giving it time to recover
+        scheduleErrorMessage('Failed to load the HLS stream. The URL might be expired, geo-blocked, or the server is rejecting requests.');
+      } else if (initial === 'video') {
+        // If it was a generic video, it might be a hidden M3U8. Force HLS to check.
         setPlaybackStrategy('forceHLS');
+      } else if (initial !== 'hls') {
+        scheduleErrorMessage('Failed to play the media URL. It might be invalid, unsupported, or blocked.');
       }
-    } else {
-      emitSystemMessage('failed to play the media URL. It might be invalid, unsupported, or blocked by CORS.');
     }
   };
 
@@ -256,6 +326,11 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
   const handleProgress = (state) => {
      if (!seeking) {
         setPlayedSeconds(state.playedSeconds);
+     }
+     // If we have buffered data, consider playback started
+     if (state.playedSeconds > 0 || state.loadedSeconds > 0) {
+        hasStartedPlaybackRef.current = true;
+        clearErrorTimer();
      }
   };
 
@@ -344,8 +419,9 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
   const handleChangeMedia = (e) => {
     e.preventDefault();
     if (!urlInput.trim()) return;
-    socket.emit('change_media', { url: urlInput, title: 'Direct URL' });
-    emitSystemMessage(`started playing ${urlInput}`);
+    const cleanUrl = urlInput.trim();
+    socket.emit('change_media', { url: cleanUrl, title: 'Direct URL' });
+    emitSystemMessage(`started playing ${cleanUrl}`);
     setUrlInput('');
   };
 
@@ -399,6 +475,10 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
   };
 
   const onReady = () => {
+     // Mark that the player is ready and cancel any pending error messages
+     hasStartedPlaybackRef.current = true;
+     clearErrorTimer();
+     
      if (playerRef.current && currentMedia && (currentMedia.includes('youtube.com') || currentMedia.includes('youtu.be'))) {
         const internalPlayer = playerRef.current.getInternalPlayer('youtube');
         if (internalPlayer && internalPlayer.getAvailableQualityLevels) {
@@ -444,10 +524,6 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
   };
 
   const activeStrategy = playbackStrategy === 'auto' ? getInitialStrategy(currentMedia) : playbackStrategy;
-  
-  // By default, avoid 'anonymous' crossOrigin unless subtitles are loaded.
-  // This drastically improves compatibility for direct video links that don't have CORS headers.
-  const fileAttributes = subtitleUrl ? { crossOrigin: 'anonymous' } : {};
 
   return (
     <div className="flex flex-col h-full bg-amoled relative">
@@ -544,60 +620,55 @@ export default function Player({ socket, roomState, roomId, currentUserId, onTog
       >
         <div className={`w-full h-full transition-transform duration-500 flex items-center justify-center ${showControls && currentMedia ? 'scale-[0.98]' : 'scale-100'}`} style={{ transformOrigin: 'top center', transitionTimingFunction: 'cubic-bezier(0.4, 0, 0.2, 1)' }}>
           {currentMedia ? (
-            <ReactPlayer 
-              ref={playerRef}
-              url={currentMedia}
-              playing={playing && !stopTimer}
-              playbackRate={playbackRate}
-              volume={volume}
-              muted={muted}
-              onReady={onReady}
-              onDuration={setDuration}
-              onProgress={handleProgress}
-              width="100%"
-              height="100%"
-              controls={directControls}
-              className="absolute top-0 left-0" 
-              style={{ pointerEvents: directControls ? 'auto' : 'none' }}
-              config={{
-                youtube: {
-                  playerVars: { controls: directControls ? 1 : 0, disablekb: 1, modestbranding: 1, cc_load_policy: 1, iv_load_policy: 3 }
-                },
-                file: {
-                   forceHLS: activeStrategy === 'hls',
-                   forceDASH: activeStrategy === 'dash',
-                   forceVideo: activeStrategy === 'video' || activeStrategy === 'auto',
-                   tracks: subtitleUrl ? [{ kind: 'subtitles', src: subtitleUrl, srcLang: 'en', default: true }] : [],
-                   attributes: fileAttributes,
-                   hlsOptions: {
-                     xhrSetup: function(xhr, url) {
-                       if (url.startsWith('http') && !url.includes(serverUrl + '/proxy')) {
-                         const proxyUrl = serverUrl + '/proxy?url=' + encodeURIComponent(url);
-                         
-                         // Save properties that hls.js already set on the xhr instance
-                         const responseType = xhr.responseType;
-                         const timeout = xhr.timeout;
-                         const withCredentials = xhr.withCredentials;
-                         
-                         xhr.open('GET', proxyUrl, true);
-                         
-                         // Restore them after re-opening
-                         if (responseType) xhr.responseType = responseType;
-                         if (timeout) xhr.timeout = timeout;
-                         if (withCredentials) xhr.withCredentials = withCredentials;
-                       }
-                     }
-                   }
-                }
-              }}
-              onError={handleMediaError}
+            isYoutubeUrl(currentMedia) ? (
+              <ReactPlayer 
+                ref={playerRef}
+                url={currentMedia}
+                playing={playing && !stopTimer}
+                playbackRate={playbackRate}
+                volume={volume}
+                muted={muted}
+                onReady={onReady}
+                onDuration={setDuration}
+                onProgress={handleProgress}
+                width="100%"
+                height="100%"
+                controls={directControls}
+                className="absolute top-0 left-0" 
+                style={{ pointerEvents: directControls ? 'auto' : 'none' }}
+                config={{
+                  youtube: {
+                    playerVars: { controls: directControls ? 1 : 0, disablekb: 1, modestbranding: 1, cc_load_policy: 1, iv_load_policy: 3 }
+                  }
+                }}
+                onError={handleMediaError}
               />
-              ) : (
-              <div className="text-gray-600 flex flex-col items-start select-none pointer-events-none">
+            ) : (
+              <CustomVideoPlayer
+                ref={playerRef}
+                url={currentMedia}
+                playing={playing && !stopTimer}
+                playbackRate={playbackRate}
+                volume={volume}
+                muted={muted}
+                onReady={onReady}
+                onDuration={setDuration}
+                onProgress={handleProgress}
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
+                onEnded={() => setPlaying(false)}
+                onError={handleMediaError}
+                serverUrl={serverUrl}
+                subtitleUrl={subtitleUrl}
+                className="absolute top-0 left-0 w-full h-full"
+              />
+            )
+          ) : (
+            <div className="text-gray-600 flex flex-col items-center select-none pointer-events-none">
               <Play size={48} className="mb-2 opacity-20" />
               <p className="text-sm font-medium">Select media to start watching</p>
-              </div>
-              )}
+            </div>
+          )}
               </div>
 
 
